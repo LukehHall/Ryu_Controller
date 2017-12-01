@@ -1,0 +1,24 @@
+------------------------------------------------------------
+Server listening on UDP port 5566
+Receiving 1470 byte datagrams
+UDP buffer size:  208 KByte (default)
+------------------------------------------------------------
+[ 15] local 10.0.0.2 port 5566 connected with 10.0.0.1 port 57912
+[ ID] Interval       Transfer     Bandwidth        Jitter   Lost/Total Datagrams
+[ 15]  0.0- 1.0 sec  1.19 MBytes  10.0 Mbits/sec   0.025 ms    0/  850 (0%)
+[ 15]  1.0- 2.0 sec  1.19 MBytes  10.0 Mbits/sec   0.042 ms    0/  851 (0%)
+[ 15]  2.0- 3.0 sec  1.19 MBytes  10.0 Mbits/sec   0.033 ms    0/  850 (0%)
+[ 15]  3.0- 4.0 sec  1.19 MBytes  10.0 Mbits/sec   0.048 ms    0/  850 (0%)
+[ 15]  4.0- 5.0 sec  1.19 MBytes  10.0 Mbits/sec   0.035 ms    0/  851 (0%)
+[ 15]  5.0- 6.0 sec  1.19 MBytes  10.0 Mbits/sec   0.034 ms    0/  850 (0%)
+[ 15]  6.0- 7.0 sec  1.19 MBytes  10.0 Mbits/sec   0.024 ms    0/  850 (0%)
+[ 15]  7.0- 8.0 sec  1.19 MBytes  10.0 Mbits/sec   0.029 ms    0/  851 (0%)
+[ 15]  8.0- 9.0 sec  1.19 MBytes  10.0 Mbits/sec   0.054 ms    0/  850 (0%)
+[ 15]  9.0-10.0 sec  1.19 MBytes  10.0 Mbits/sec   0.028 ms    0/  850 (0%)
+[ 15] 10.0-11.0 sec  1.19 MBytes  10.0 Mbits/sec   0.032 ms    0/  851 (0%)
+[ 15] 11.0-12.0 sec  1.19 MBytes  10.0 Mbits/sec   0.033 ms    0/  850 (0%)
+[ 15] 12.0-13.0 sec  1.19 MBytes  10.0 Mbits/sec   0.065 ms    0/  850 (0%)
+[ 15] 13.0-14.0 sec  1.19 MBytes  10.0 Mbits/sec   0.032 ms    0/  851 (0%)
+[ 15] 14.0-15.0 sec  1.19 MBytes  10.0 Mbits/sec   0.033 ms    0/  850 (0%)
+[ 15]  0.0-15.0 sec  17.9 MBytes  10.0 Mbits/sec   0.030 ms    0/12756 (0%)
+[ 15]  0.0-15.0 sec  1 datagrams received out-of-order
