@@ -1,46 +1,25 @@
 # Luke Hall B425724 - Part C Project
-# Learning Switch - Learns MAC addresses
-
-# Based on simple_switch_13.py, found here :
-# http://github.com/osrg/ryu/blob/master/ryu/app/simple_switch_13.py
-#
-###############################################################################
-#
-# Copyright (C) 2011 Nippon Telegraph and Telephone Corporation.
-#
-# Licensed under the Apache License, Version 2.0 (the "License").
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#   http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or,
-# implied
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Mitigation Controller - Controller with attack mitigation functionality
 
 from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
-from ryu.controller.handler import set_ev_cls
-from ryu.ofproto import ofproto_v1_3
 from ryu.lib.packet import packet, ethernet, ether_types
+from ryu.ofproto import ofproto_v1_3
+from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER
 
 
-class LearningSwitch(app_manager.RyuApp):
-    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+class MitigationController(app_manager.RyuApp):
+    OFP_VERSIONS = [ofproto_v1_3]
 
     def __init__(self, *args, **kwargs):
-        super(LearningSwitch, self).__init__(*args, **kwargs)
+        super(MitigationController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         """
-        Process features response message from switch, called by event trigger ( opf_event.EventOFPSwitchFeatures )
-        :param ev: packet from event
+        Handler for switch features event, decode event packet before passing to add_flow
+        :param ev: event packet
         :return: None
         """
         datapath = ev.msg.datapath
@@ -50,50 +29,46 @@ class LearningSwitch(app_manager.RyuApp):
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
-        # Retrieve info for logging
-        in_port = ev.msg.match['in_port']
-        pkt = packet.Packet(ev.msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
-        dpid = datapath.id
-        src = eth.src
-        dst = eth.src
-        # Log info
-        self.logger.info("switch features: %s %s %s %s", dpid, src, dst, in_port)
+        # from ofproto_v1_3.py :
+        # OFPP_CONTROLLER action = Send packet to controller
+        # OFPCML_NO_BUFFER action = don't apply buffer & send whole packet to controller
 
-        # Add flow
         self.add_flow(datapath, 0, match, actions)
 
-    def add_flow(self, datapath, priority, match, actions, buffer_id=None):
+    @staticmethod
+    def add_flow(datapath, priority, match, actions, buffer_id=None):
         """
-        Add flows to switch to reduce future overhead / delay
-        :param datapath: datapath of the flow
-        :param priority: priority of the flow
+        Add flows to routing table for future use
+        :param datapath: datapath of event packet
+        :param priority: priority level of packet (0 if from switch_features, 1 if from packet_in)
         :param match:
-        :param actions: actions to be taken
-        :param buffer_id: buffer id of the flow
+        :param actions: actions taken by switch
+        :param buffer_id: buffer id of event packet
         :return: None
         """
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        # from ofproto_v1_3.py
+        # OFPIT_APPLY_ACTIONS action = apply actions immediately
 
+        # Modify a flow table entry
         if buffer_id:
-            # replace current flow
             mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
                                     priority=priority, match=match,
                                     instructions=inst)
         else:
-            # add new flow
             mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
+        # Call DDoS detection algo here ? -- add_flow called everytime a packet passes to controller
+        # ( add_flow called by both packet_in & switch_features )
 
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         """
-        Process new/unknown flow in network, called by event triggering ( ofp_event.EventOFPPacketIn )
-        :param ev: packet from event
+        Decode packet with unknown flow, then send to add_flow
+        :param ev: event packet
         :return: None
         """
         msg = ev.msg
@@ -114,19 +89,22 @@ class LearningSwitch(app_manager.RyuApp):
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
 
-        self.logger.info("packet in: %s %s %s %s", dpid, src, dst, in_port)
+        self.logger.info("packet_in : %s %s %s %s", dpid, src, dst, in_port)
 
-        # learn mac address to avoid OFPP_FLOOD in future
+        # Check if packet/flow has been seen before (whether it is in mac_to_port map)
         self.mac_to_port[dpid][src] = in_port
-
         if dst in self.mac_to_port[dpid]:
+            # packet/flow is already in mac_to_port map
+            # send packet to previously used port
             out_port = self.mac_to_port[dpid][dst]
         else:
+            # packet/flow unknown
+            # send packet to all ports
             out_port = ofproto.OFPP_FLOOD
 
         actions = [parser.OFPActionOutput(out_port)]
 
-        # add flow to avoid triggering EventOFPPacketIn in future
+        # add flow to avoid triggering event again
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_dst=dst)
             # verify valid buffer_id. If valid, don't send both flow_mod & packet out
