@@ -19,7 +19,7 @@ class MitigationController(app_manager.RyuApp):
     def switch_features_handler(self, ev):
         """
         Handler for switch features event, decode event packet before passing to add_flow
-        :param ev: event packet
+        :param ev: event
         :return: None
         """
         datapath = ev.msg.datapath
@@ -62,13 +62,13 @@ class MitigationController(app_manager.RyuApp):
             mod = parser.OFPFlowMod(datapath=datapath, priority=priority,
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
-        # Call DDoS detection algo here ? -- add_flow called everytime a packet passes to controller
+        # Call DDoS detection algo here ? -- add_flow called every time a packet passes to controller
         # ( add_flow called by both packet_in & switch_features )
 
     def packet_in_handler(self, ev):
         """
         Decode packet with unknown flow, then send to add_flow
-        :param ev: event packet
+        :param ev: event
         :return: None
         """
         msg = ev.msg
