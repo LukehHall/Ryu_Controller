@@ -9,11 +9,11 @@ class DDoSDetection:
 
     def __init__(self):
         super(DDoSDetection, self).__init__()
-        self.ip_dict = {}           # Dictionary to hold ip addresses and number of times they have been seen
-        self.packet_threshold = 10  # Packets/sec threshold
-        self.ddos_detected = False  # Flag for whether DDoS detected
-        self.timer_running = False  # Flag for timer status
-        self.timer = Timer(10, self.timer_ended())   # 10 second interval, self.timer_ended() is handler
+        self.__ip_dict = {}           # Dictionary to hold ip addresses and number of times they have been seen
+        self.__packet_threshold = 10  # Packets/sec threshold
+        self.__ddos_detected = False  # Flag for whether DDoS detected
+        self.__timer_running = False  # Flag for timer status
+        self.__timer = Timer(10, self.__timer_ended())   # 10 second interval, self.timer_ended() is handler
 
     def read_packet(self, pkt):
         """
@@ -21,77 +21,94 @@ class DDoSDetection:
         :param pkt: incoming packet
         :return: None
         """
-        if not self.timer_running:
-            self.start_timer()
+        if not self.__timer_running:
+            self.__start_timer()
         if pkt.isInstance(packet.Packet()):
             # pkt is a packet, can be used
             print("Input is a packet")
             eth = pkt.get_protocols(ethernet.ethernet[0])
             src_ip = eth.src
-            self.check_ip(src_ip)
+            self.__check_ip(src_ip)
         else:
             # pkt is not a packet, return (TODO: possibly with error)
             print("Input is not a packet")
             return
 
-    def add_new_ip(self, src_ip):
+    def __add_new_ip(self, src_ip):
         """
         Add new IP address to dictionary (value set to 1)
         :param src_ip: New IP address to add
         :return: None
         """
-        self.ip_dict[src_ip] = 1
+        self.__ip_dict[src_ip] = 1
 
-    def check_ip(self, src_ip):
+    def __check_ip(self, src_ip):
         """
         Check through dictionary for input IP, increment value if it already exists
         add IP if it doesn't already exist
         :param src_ip: input IP address
         :return: None
         """
-        for ip, value in self.ip_dict.items():  # Iterate through ip_dict
+        print("Checking source IP")
+        for ip, value in self.__ip_dict.items():  # Iterate through ip_dict
             if src_ip == ip:
                 # ip already exists, increment value
                 value += 1
-                if value >= self.packet_threshold:  # check number of packets from ip
-                    self.ddos_detected = True       # Set DDoS flag
+                if value >= self.__packet_threshold:  # check number of packets from ip
+                    self.__set_ddos_detected(True)
                 return
         # Out of for loop, IP doesn't exist
-        self.add_new_ip(src_ip)
+        self.__add_new_ip(src_ip)
 
-    def reset_ip_dict(self):
+    def __reset_ip_dict(self):
         """
         Reset / Clear IP dictionary
         :return: None
         """
-        self.ip_dict.clear()
+        print("Reset IP dictionary")
+        self.__ip_dict.clear()
 
-    def start_timer(self):
+    def __set_ddos_detected(self, detected):
+        """
+        Class private setter for ddos_detected
+        :param detected: (Boolean) whether ddos_detected
+        :return: None
+        """
+        self.__ddos_detected = detected
+
+    def get_ddos_detected(self):
+        """
+        Getter for ddos_detected
+        :return: (Boolean) ddos_detected
+        """
+        return self.__ddos_detected
+
+    def __start_timer(self):
         """
         Starts timer & sets status boolean
         :return: None
         """
-        self.timer_running = True
-        self.timer.run()
+        self.__timer_running = True
+        self.__timer.run()
 
-    def timer_ended(self):
+    def __timer_ended(self):
         """
         Handler for timer ending, reset dict and timer_running
-        :return:
+        :return: None
         """
-        self.timer_running = False
-        self.reset_ip_dict()
+        self.__timer_running = False
+        self.__reset_ip_dict()
 
-    def get_timer_status(self):
+    def __get_timer_status(self):
         """
         Getter for whether timer is running
         :return: (Boolean) timer_running
         """
-        return self.timer_running
+        return self.__timer_running
 
-    def cancel_timer(self):
+    def __cancel_timer(self):
         """
         Cancel timer
-        :return:
+        :return: None
         """
-        self.timer.cancel()
+        self.__timer.cancel()

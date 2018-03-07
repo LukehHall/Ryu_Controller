@@ -6,6 +6,7 @@ from ryu.controller import ofp_event
 from ryu.lib.packet import packet, ethernet, ether_types
 from ryu.ofproto import ofproto_v1_3
 from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER
+from Ryu_Controller.DDoSDetection import DDoSDetection
 
 
 class MitigationController(app_manager.RyuApp):
@@ -13,7 +14,8 @@ class MitigationController(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(MitigationController, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
+        self.mac_to_port = {}                       # List for MAC address to switch port
+        self.detector = DDoSDetection()             # DDoS detector
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -33,10 +35,15 @@ class MitigationController(app_manager.RyuApp):
         # OFPP_CONTROLLER action = Send packet to controller
         # OFPCML_NO_BUFFER action = don't apply buffer & send whole packet to controller
 
+        # Get IP Packet for detector
+        msg = ev.msg
+        pkt = packet.Packet(msg.data)
+        # Pass IP Packet to detector
+        self.detector.read_packet(pkt)
+
         self.add_flow(datapath, 0, match, actions)
 
-    @staticmethod
-    def add_flow(datapath, priority, match, actions, buffer_id=None):
+    def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         """
         Add flows to routing table for future use
         :param datapath: datapath of event packet
@@ -46,6 +53,12 @@ class MitigationController(app_manager.RyuApp):
         :param buffer_id: buffer id of event packet
         :return: None
         """
+        # Check if DDoS detected
+        self.logger.info("Checking if DDoS detected")
+        if self.detector.get_ddos_detected():
+            self.logger.info("DDos detected")
+            # TODO: Blocking here
+
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
@@ -85,6 +98,9 @@ class MitigationController(app_manager.RyuApp):
             return
         dst = eth.dst
         src = eth.src
+
+        # Pass IP Packet to detector
+        self.detector.read_packet(pkt)
 
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
