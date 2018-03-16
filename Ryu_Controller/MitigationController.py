@@ -10,7 +10,7 @@ from Ryu_Controller.DDoSDetection import DDoSDetection
 
 
 class MitigationController(app_manager.RyuApp):
-    OFP_VERSIONS = [ofproto_v1_3]
+    OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(MitigationController, self).__init__(*args, **kwargs)
@@ -35,11 +35,12 @@ class MitigationController(app_manager.RyuApp):
         # OFPP_CONTROLLER action = Send packet to controller
         # OFPCML_NO_BUFFER action = don't apply buffer & send whole packet to controller
 
+        # BELOW IS WRONG (SwitchFeatures doesn't contain a data member)
         # Get IP Packet for detector
-        msg = ev.msg
-        pkt = packet.Packet(msg.data)
+        #msg = ev.msg
+        #pkt = packet.Packet(msg.data)
         # Pass IP Packet to detector
-        self.detector.read_packet(pkt)
+        #self.detector.read_packet(pkt)
 
         self.add_flow(datapath, 0, match, actions)
 
@@ -58,6 +59,8 @@ class MitigationController(app_manager.RyuApp):
         if self.detector.get_ddos_detected():
             self.logger.info("DDos detected")
             # TODO: Blocking here
+        else:
+            self.logger.info("No attack detected")
 
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -78,6 +81,7 @@ class MitigationController(app_manager.RyuApp):
         # Call DDoS detection algo here ? -- add_flow called every time a packet passes to controller
         # ( add_flow called by both packet_in & switch_features )
 
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         """
         Decode packet with unknown flow, then send to add_flow
@@ -100,7 +104,7 @@ class MitigationController(app_manager.RyuApp):
         src = eth.src
 
         # Pass IP Packet to detector
-        self.detector.read_packet(pkt)
+        self.detector.read_packet(pkt, src)
 
         dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})

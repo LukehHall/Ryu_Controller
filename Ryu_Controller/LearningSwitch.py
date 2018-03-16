@@ -51,14 +51,14 @@ class LearningSwitch(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         # Retrieve info for logging
-        in_port = ev.msg.match['in_port']
-        pkt = packet.Packet(ev.msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
-        dpid = datapath.id
-        src = eth.src
-        dst = eth.src
+        #in_port = ev.msg.match['in_port']
+        #pkt = packet.Packet(ev.msg.data)
+        #eth = pkt.get_protocols(ethernet.ethernet)[0]
+        #dpid = datapath.id
+        #src = eth.src
+        #dst = eth.src
         # Log info
-        self.logger.info("switch features: %s %s %s %s", dpid, src, dst, in_port)
+        #self.logger.info("switch features: %s %s %s %s", dpid, src, dst, in_port)
 
         # Add flow
         self.add_flow(datapath, 0, match, actions)

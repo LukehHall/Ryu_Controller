@@ -8,30 +8,32 @@ from threading import Timer
 class DDoSDetection:
 
     def __init__(self):
-        super(DDoSDetection, self).__init__()
         self.__ip_dict = {}           # Dictionary to hold ip addresses and number of times they have been seen
         self.__packet_threshold = 10  # Packets/sec threshold
         self.__ddos_detected = False  # Flag for whether DDoS detected
         self.__timer_running = False  # Flag for timer status
+        #self.__timer = None           # Timer
         self.__timer = Timer(10, self.__timer_ended())   # 10 second interval, self.timer_ended() is handler
 
-    def read_packet(self, pkt):
+    def read_packet(self, pkt, src_ip):
         """
         Read the input packet to find src ip
         :param pkt: incoming packet
         :return: None
         """
         if not self.__timer_running:
+            self.__reset_timer()
             self.__start_timer()
-        if pkt.isInstance(packet.Packet()):
+        if type(pkt) is type(packet.Packet()):
             # pkt is a packet, can be used
-            print("Input is a packet")
-            eth = pkt.get_protocols(ethernet.ethernet[0])
-            src_ip = eth.src
+            self.__print_log("Input is a packet")
+            #print(pkt)
+            #eth = pkt.get_protocol(ethernet.ethernet[0])
+            self.__print_log("Source :: " + src_ip)
             self.__check_ip(src_ip)
         else:
             # pkt is not a packet, return (TODO: possibly with error)
-            print("Input is not a packet")
+            self.__print_log("Input is not a packet")
             return
 
     def __add_new_ip(self, src_ip):
@@ -49,7 +51,7 @@ class DDoSDetection:
         :param src_ip: input IP address
         :return: None
         """
-        print("Checking source IP")
+        self.__print_log("Checking source IP")
         for ip, value in self.__ip_dict.items():  # Iterate through ip_dict
             if src_ip == ip:
                 # ip already exists, increment value
@@ -65,7 +67,7 @@ class DDoSDetection:
         Reset / Clear IP dictionary
         :return: None
         """
-        print("Reset IP dictionary")
+        self.__print_log("Reset IP dictionary")
         self.__ip_dict.clear()
 
     def __set_ddos_detected(self, detected):
@@ -89,13 +91,14 @@ class DDoSDetection:
         :return: None
         """
         self.__timer_running = True
-        self.__timer.run()
+        self.__timer.start()
 
     def __timer_ended(self):
         """
         Handler for timer ending, reset dict and timer_running
         :return: None
         """
+        self.__timer = None
         self.__timer_running = False
         self.__reset_ip_dict()
 
@@ -112,3 +115,20 @@ class DDoSDetection:
         :return: None
         """
         self.__timer.cancel()
+
+    def __reset_timer(self):
+        """
+        Reset timer
+        :return: None
+        """
+        self.__print_log("Timer reset")
+        self.__timer = Timer(10, self.__timer_ended())
+
+    @staticmethod
+    def __print_log(msg):
+        """
+        Print messages with a standard format
+        :param msg: (string) message to print
+        :return: None
+        """
+        print("DDoS :: " + msg)
