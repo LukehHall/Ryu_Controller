@@ -1,7 +1,7 @@
 # Luke Hall B425724 - Part C Project
-# SwitchStats Controller - Controller that gets usage stats from switch during operation
-from threading import Timer
+# PortStats Controller - Controller that gets usage stats from switch during operation
 
+from threading import Timer
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.lib.packet import packet, ethernet, ether_types
@@ -9,11 +9,11 @@ from ryu.ofproto import ofproto_v1_3
 from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER
 
 
-class SwitchStatsController(app_manager.RyuApp):
+class PortStatsController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(SwitchStatsController, self).__init__(*args, **kwargs)
+        super(PortStatsController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}           # List for MAC addresses to switch port
 
     """ Event Handlers """
@@ -33,9 +33,6 @@ class SwitchStatsController(app_manager.RyuApp):
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
-        # from ofproto_v1_3.py :
-        # OFPP_CONTROLLER action = Send packet to controller
-        # OFPCML_NO_BUFFER action = don't apply buffer & send whole packet to controller
         self.add_flow(datapath, 0, match, actions)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -93,6 +90,8 @@ class SwitchStatsController(app_manager.RyuApp):
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
+        # Send port stats req
+        self.send_port_stats_request(datapath)
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def port_stats_reply_handler(self, ev):
