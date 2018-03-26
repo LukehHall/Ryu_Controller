@@ -7,3 +7,4 @@ Classes:
     + LearningSwitch.py - Learning layer 2 switch
     + MitigationController.py - Ryu controller containing mitigation methods
     + DDoSSetection.py - DDoS detection module
+    + PortStatsController.py - Ryu controller using port stats for detection
