@@ -15,6 +15,7 @@ class PortStatsController(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(PortStatsController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}           # List for MAC addresses to switch port
+        self.switch_responded = False    # Boolean to check whether switch has responded with port stats
 
     """ Event Handlers """
 
@@ -101,6 +102,7 @@ class PortStatsController(app_manager.RyuApp):
         :param ev: Event message
         :return: None
         """
+        self.switch_responded = True
         ports = []
         for stat in ev.msg.body:
                 ports.append('port_no=%d '
@@ -120,7 +122,7 @@ class PortStatsController(app_manager.RyuApp):
                               stat.duration_sec, stat.duration_nsec))
         self.logger.debug('PortStats: %s', ports)
         request_timer = Timer(30, self.send_port_stats_request(ev.msg.datapath))  # Timer to send new OFPPortStats
-        request_timer.run()
+        request_timer.start()
 
     """ Public Methods"""
 
@@ -155,12 +157,14 @@ class PortStatsController(app_manager.RyuApp):
         Send port stats request message to switch
         :return: None
         """
-        ofp = datapath.ofproto
-        ofp_parser = datapath.ofproto_parser
+        if not self.switch_responded:
+            ofp = datapath.ofproto
+            ofp_parser = datapath.ofproto_parser
 
-        # ofp.OFPP_ANY sends request for all ports
-        req = ofp_parser.OFPPortStatsRequest(datapath, 0, ofp.OFPP_ANY)
-        datapath.send_msg(req)
-        self.logger.info("Port Stats Message Sent")
+            # ofp.OFPP_ANY sends request for all ports
+            req = ofp_parser.OFPPortStatsRequest(datapath, 0, ofp.OFPP_ANY)
+            datapath.send_msg(req)
+            self.logger.info("Port Stats Request Message Sent")
+            self.switch_responded = False
 
     """ Private Methods """
