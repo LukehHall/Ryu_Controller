@@ -15,7 +15,9 @@ class PortStatsController(app_manager.RyuApp):
     def __init__(self, *args, **kwargs):
         super(PortStatsController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}           # List for MAC addresses to switch port
-        self.switch_responded = False    # Boolean to check whether switch has responded with port stats
+        self.switch_responded = True   # Boolean to check whether switch has responded with port stats
+        self.datapath_store = None      # Variable to store datapath so it can be used out of context
+        self.timer = None
 
     """ Event Handlers """
 
@@ -91,8 +93,9 @@ class PortStatsController(app_manager.RyuApp):
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
-        # Send port stats req
-        self.send_port_stats_request(datapath)
+        # Send port stats req & update datapath
+        self.datapath_store = datapath
+        self.send_port_stats_request()
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def port_stats_reply_handler(self, ev):
@@ -105,23 +108,19 @@ class PortStatsController(app_manager.RyuApp):
         self.switch_responded = True
         ports = []
         for stat in ev.msg.body:
-                ports.append('port_no=%d '
-                             'rx_packets=%d tx_packets=%d '
-                             'rx_bytes=%d tx_bytes=%d '
-                             'rx_dropped=%d tx_dropped=%d '
-                             'rx_errors=%d tx_errors=%d '
-                             'rx_frame_err=%d rx_over_err=%d rx_crc_err=%d '
-                             'collisions=%d duration_sec=%d duration_nsec=%d' %
-                             (stat.port_no,
-                              stat.rx_packets, stat.tx_packets,
-                              stat.rx_bytes, stat.tx_bytes,
-                              stat.rx_dropped, stat.tx_dropped,
-                              stat.rx_errors, stat.tx_errors,
-                              stat.rx_frame_err, stat.rx_over_err,
-                              stat.rx_crc_err, stat.collisions,
-                              stat.duration_sec, stat.duration_nsec))
-        self.logger.debug('PortStats: %s', ports)
-        request_timer = Timer(30, self.send_port_stats_request(ev.msg.datapath))  # Timer to send new OFPPortStats
+            ports.append('port_no=%d '
+                            'rx_packets=%d tx_packets=%d '
+                            'rx_bytes=%d tx_bytes=%d '
+                            'duration_sec=%d duration_nsec=%d' %
+                            (stat.port_no,
+                            stat.rx_packets, stat.tx_packets,
+                            stat.rx_bytes, stat.tx_bytes,
+                            stat.duration_sec, stat.duration_nsec))
+        for port in ports:
+            self.logger.info('PortStats: %s\n\n', port)
+        #request_timer = Timer(30, self.send_port_stats_request(ev.msg.datapath))  # Timer to send new OFPPortStats
+        #request_timer.start()
+        request_timer = Timer(60, self.send_port_stats_request)
         request_timer.start()
 
     """ Public Methods"""
@@ -152,18 +151,19 @@ class PortStatsController(app_manager.RyuApp):
                                     match=match, instructions=inst)
         datapath.send_msg(mod)
 
-    def send_port_stats_request(self, datapath):
+    def send_port_stats_request(self):
         """
         Send port stats request message to switch
         :return: None
         """
-        if not self.switch_responded:
-            ofp = datapath.ofproto
-            ofp_parser = datapath.ofproto_parser
+        if self.switch_responded:
+            # Currently not waiting for switch to respond to previous request
+            ofp = self.datapath_store.ofproto
+            ofp_parser = self.datapath_store.ofproto_parser
 
             # ofp.OFPP_ANY sends request for all ports
-            req = ofp_parser.OFPPortStatsRequest(datapath, 0, ofp.OFPP_ANY)
-            datapath.send_msg(req)
+            req = ofp_parser.OFPPortStatsRequest(self.datapath_store, 0, ofp.OFPP_ANY)
+            self.datapath_store.send_msg(req)
             self.logger.info("Port Stats Request Message Sent")
             self.switch_responded = False
 
