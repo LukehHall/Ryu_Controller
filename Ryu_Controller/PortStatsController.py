@@ -21,11 +21,11 @@ class PortStatsController(app_manager.RyuApp):
 
         # DDoS detection variables & members
         self.switch_ports = []          # List of ports on switch
-        self.prev_port_rx = {}          # Dictionary containing previous: {port_number, rx_packets}
-        self.curr_port_rx = {}          # Dictionary containing new: {port_number, rx_packets}
-        self.diff_port_rx = {}          # Dictionary containing rx difference: {port_number, difference}
+        self.prev_port_tx = {}          # Dictionary containing previous: {port_number, rx_packets}
+        self.curr_port_tx = {}          # Dictionary containing new: {port_number, rx_packets}
+        self.diff_port_tx = {}          # Dictionary containing rx difference: {port_number, difference}
         self.pktps = {}                 # Dictionary containing pkts/s: {port_number, pkts/s}
-        self.rx_packet_threshold = 500  # Threshold for received packets on port
+        self.tx_packet_threshold = 500  # Threshold for received packets on port
         self.timer_length = 60          # Timer length
         self.ddos = {}                  # DDoS dictionary for each port: {port_number, flag}
 
@@ -119,6 +119,7 @@ class PortStatsController(app_manager.RyuApp):
         """
         self.switch_responded = True
         ports = []
+        port_packet_recv = {}
         for stat in ev.msg.body:
             ports.append('port_no=%d '
                          'rx_packets=%d tx_packets=%d '
@@ -128,8 +129,11 @@ class PortStatsController(app_manager.RyuApp):
                           stat.rx_packets, stat.tx_packets,
                           stat.rx_bytes, stat.tx_bytes,
                           stat.duration_sec, stat.duration_nsec))
+            port_packet_recv[stat.port_no] = stat.tx_packets
+            self.__ddos_detection(port_packet_recv)
         for port in ports:
-            self.logger.info('PortStats: %s\n\n', port)
+            self.logger.info('PortStats: %s\n'
+                             '----------------------------------------------------------', port)
         request_timer = Timer(self.timer_length, self.send_port_stats_request)
         request_timer.start()
 
@@ -180,41 +184,60 @@ class PortStatsController(app_manager.RyuApp):
 
     """ Private Methods """
 
-    def __update_curr_rx(self, new_curr):
+    def __ddos_detection(self, new_curr):
         """
-        Update curr_port_rx dictionary with new values
+        Update current port rx
+        Check whether DDoS has been detected in system
+        Update previous port rx
+        :return: None
+        """
+        self.__update_curr_tx(new_curr)
+        if self.prev_port_tx:
+            # self.prev_port_tx is not empty
+            self.__find_pkt_count_diff()
+            self.__calc_pkts_per_sec()
+            self.__compare_threshold()
+            for port, flag in self.ddos:
+                if flag:
+                    self.logger.info("DDoS detected RX on port %d", port)
+        self.__update_prev_tx(self.curr_port_tx)
+        self.logger.info("DDoS detection finished")
+
+    def __update_curr_tx(self, new_curr):
+        """
+        Update curr_port_tx dictionary with new values
         :param new_curr: Dictionary containing: {port_no, rx_packet_count}
         :return: None
         """
         for port, rx_count in new_curr.items():
-            if port in self.curr_port_rx.keys():
+            if port in self.curr_port_tx.keys():
                 self.logger.info("Updated port: %d", port)
             else:
                 self.logger.info("New port: %d", port)
-            self.curr_port_rx[port] = rx_count
+            self.curr_port_tx[port] = rx_count
 
-    def __update_prev_rx(self, new_prev):
+    def __update_prev_tx(self, new_prev):
         """
-        Update prev_port_rx dictionary with new values
+        Update prev_port_tx dictionary with new values
         :param new_prev: Dictionary containing: {port_no, rx_packet_count}
         :return: None
         """
         for port,rx_count in new_prev.items():
-            if port in self.prev_port_rx.keys():
+            if port in self.prev_port_tx.keys():
                 self.logger.info("Updated port: %d", port)
             else:
                 self.logger.info("New port: %d", port)
-            self.prev_port_rx[port] = rx_count
+            self.prev_port_tx[port] = rx_count
 
     def __find_pkt_count_diff(self):
         """
         Calculates the difference in rx_packet between previous and current counts
         :return: None
         """
-        for prev_port, prev_rx, curr_port, curr_rx in self.prev_port_rx.items(), self.curr_port_rx.items():
+        for prev_port, prev_tx, curr_port, curr_tx in self.prev_port_tx.items(), self.curr_port_tx.items():
             if prev_port == curr_port:
                 # Port numbers match
-                self.diff_port_rx[prev_port] = (curr_rx - prev_rx)
+                self.diff_port_tx[prev_port] = (curr_tx - prev_tx)
                 self.logger.info("Difference for port %d calculated", prev_port)
             else:
                 self.logger.info("Port numbers don't match")
@@ -224,8 +247,8 @@ class PortStatsController(app_manager.RyuApp):
         Calculate packets per second for each port
         :return: None
         """
-        for port, pkt_count in self.diff_port_rx.items():
-            self.pktps[port] = (self.diff_port_rx[port]/self.timer_length)
+        for port, pkt_count in self.diff_port_tx.items():
+            self.pktps[port] = (self.diff_port_tx[port] / self.timer_length)
             self.logger.info("Pkts/s for port %d = %d", port, self.pktps[port])
 
     def __compare_threshold(self):
@@ -234,9 +257,9 @@ class PortStatsController(app_manager.RyuApp):
         :return: None
         """
         for port, pktps in self.pktps.items():
-            if pktps >= self.rx_packet_threshold:
-                self.logger.info("Pkt/s >= threshold, DDoS detected")
+            if pktps >= self.tx_packet_threshold:
+                self.logger.info("Pkt/s >= threshold")
                 self.ddos[port] = True
             else:
-                self.logger.info("Pks/s < threshold, No DDos")
+                self.logger.info("Pks/s < threshold")
                 self.ddos[port] = False
