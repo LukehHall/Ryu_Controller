@@ -130,7 +130,7 @@ class PortStatsController(app_manager.RyuApp):
                           stat.rx_bytes, stat.tx_bytes,
                           stat.duration_sec, stat.duration_nsec))
             port_packet_recv[stat.port_no] = stat.tx_packets
-            self.__ddos_detection(port_packet_recv)
+        self.__ddos_detection(port_packet_recv)
         for port in ports:
             self.logger.info('PortStats: %s\n'
                              '----------------------------------------------------------', port)
