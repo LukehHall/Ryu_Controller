@@ -6,7 +6,8 @@ from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.lib.packet import packet, ethernet, ether_types
 from ryu.ofproto import ofproto_v1_3
-from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER, HANDSHAKE_DISPATCHER
+from ryu import utils
 
 
 class PortStatsController(app_manager.RyuApp):
@@ -14,9 +15,11 @@ class PortStatsController(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(PortStatsController, self).__init__(*args, **kwargs)
+        self.port_list = {}             # Dictionary containing port info: {port_number, hw_addr}
         self.mac_to_port = {}           # List for MAC addresses to switch port
         self.switch_responded = True    # Boolean to check whether switch has responded with port stats
         self.datapath_store = None      # Variable to store datapath so it can be used out of context
+        self.dpid_store = None          # Variable to store datapath id 
         self.initial_request = True     # Boolean so requests are only sent when timer ends & on first packet_in
 
         # Physical network variables & members
@@ -37,7 +40,7 @@ class PortStatsController(app_manager.RyuApp):
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         """
-        Process features response message from switch, called by event trigger ( opf_event.EventOFPSwitchFeatures )
+        Switch added to the controller, add table-miss entry
         https://ryu.readthedocs.io/en/latest/ofproto_v1_3_ref.html#ryu.ofproto.ofproto_v1_3_parser.OFPSwitchFeatures
         :param ev: packet from event
         :return: None
@@ -50,6 +53,10 @@ class PortStatsController(app_manager.RyuApp):
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
                                           ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
+        
+        """ Request port description """
+        req = parser.OFPPortDescStatsRequest(datapath, 0)
+        datapath.send_msg(req)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
@@ -75,9 +82,10 @@ class PortStatsController(app_manager.RyuApp):
         src = eth.src
 
         dpid = datapath.id
+        self.dpid_store = dpid
         self.mac_to_port.setdefault(dpid, {})
 
-        self.logger.info("packet in: %s %s %s %s", dpid, src, dst, in_port)
+        self.logger.info("packet_in :: %s %s %s %s", dpid, src, dst, in_port)
 
         # learn mac address to avoid OFPP_FLOOD in future
         self.mac_to_port[dpid][src] = in_port
@@ -112,6 +120,20 @@ class PortStatsController(app_manager.RyuApp):
             self.send_port_stats_request()
             self.initial_request = False
 
+    @set_ev_cls(ofp_event.EventOFPPortDescStatsReply, MAIN_DISPATCHER)
+    def port_desc_stats_reply_handler(self, ev):
+        """
+        Handler for port description reply
+        https://ryu.readthedocs.io/en/latest/ofproto_v1_3_ref.html#ryu.ofproto.ofproto_v1_3_parser.OFPPortDescStatsReply
+        :param ev: Event message
+        :return: None
+        """
+        self.logger.info("PortDesc :: Message received")
+        for port in ev.msg.body:
+            self.port_list[port.port_no] = port.hw_addr
+            self.logger.info("PortDesc :: port_no = %d  hw_addr = %s", port.port_no, port.hw_addr)
+            
+
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def port_stats_reply_handler(self, ev):
         """
@@ -127,18 +149,31 @@ class PortStatsController(app_manager.RyuApp):
             ports.append('port_no=%d '
                          'rx_packets=%d tx_packets=%d '
                          'rx_bytes=%d tx_bytes=%d '
+                         'rx_dropped=%d tx_dropped=%d '
                          'duration_sec=%d duration_nsec=%d' %
                          (stat.port_no,
                           stat.rx_packets, stat.tx_packets,
                           stat.rx_bytes, stat.tx_bytes,
+                          stat.rx_dropped, stat.tx_dropped,
                           stat.duration_sec, stat.duration_nsec))
             port_packet_recv[stat.port_no] = stat.tx_packets
         self.__ddos_detection(port_packet_recv)
         for port in ports:
-            self.logger.info('PortStats: %s\n'
+            self.logger.debug('PortStats :: %s\n'
                              '----------------------------------------------------------', port)
         request_timer = Timer(self.timer_length, self.send_port_stats_request)
         request_timer.start()
+
+    @set_ev_cls(ofp_event.EventOFPErrorMsg, [HANDSHAKE_DISPATCHER, CONFIG_DISPATCHER, MAIN_DISPATCHER])
+    def error_msg_handler(self, ev):
+        """
+        Handler for any error messages sent by switch
+        :param ev: event message
+        """
+        msg = ev.msg
+        self.logger.info('OFPErrorMsg received: type=0x%02x code=0x%02x '
+                         'message=%s',
+                         msg.type, msg.code, utils.hex_array(msg.data))
 
     """ Public Methods"""
 
@@ -182,7 +217,7 @@ class PortStatsController(app_manager.RyuApp):
             # ofp.OFPP_ANY sends request for all ports
             req = ofp_parser.OFPPortStatsRequest(self.datapath_store, 0, ofp.OFPP_ANY)
             self.datapath_store.send_msg(req)
-            self.logger.info("Port Stats Request Message Sent")
+            self.logger.info("PortStats :: Request Message Sent")
             self.switch_responded = False
 
     """ Private Methods """
@@ -197,7 +232,7 @@ class PortStatsController(app_manager.RyuApp):
         self.__update_curr_tx(new_curr)
         if self.prev_port_tx:
             # self.prev_port_tx is not empty
-            self.logger.info("self.prev_port_tx not empty")
+            self.logger.debug("self.prev_port_tx not empty")
             self.__find_pkt_count_diff()
             self.__calc_pkts_per_sec()
             self.__compare_threshold()
@@ -206,10 +241,11 @@ class PortStatsController(app_manager.RyuApp):
                     self.logger.info("==========================================================")
                     self.logger.info("          DDoS detected :: Origin =  port %d", port)
                     self.logger.info("==========================================================")
+                    self.__mitigate_attack(port)
         else:
-            self.logger.info("self.prev_port_tx is empty")
+            self.logger.debug("self.prev_port_tx is empty")
         self.__update_prev_tx(self.curr_port_tx)
-        self.logger.info("DDoS detection finished")
+        self.logger.debug("DDoS detection finished")
 
     def __update_curr_tx(self, new_curr):
         """
@@ -219,9 +255,9 @@ class PortStatsController(app_manager.RyuApp):
         """
         for port, tx_count in new_curr.items():
             if port in self.curr_port_tx.keys():
-                self.logger.info("Updated curr_port: %d", port)
+                self.logger.debug("Updated curr_port: %d", port)
             else:
-                self.logger.info("New curr_port: %d", port)
+                self.logger.debug("New curr_port: %d", port)
             self.curr_port_tx[port] = tx_count
 
     def __update_prev_tx(self, new_prev):
@@ -232,9 +268,9 @@ class PortStatsController(app_manager.RyuApp):
         """
         for port,tx_count in new_prev.items():
             if port in self.prev_port_tx.keys():
-                self.logger.info("Updated prev_port: %d", port)
+                self.logger.debug("Updated prev_port: %d", port)
             else:
-                self.logger.info("New prev_port: %d", port)
+                self.logger.debug("New prev_port: %d", port)
             self.prev_port_tx[port] = tx_count
 
     def __find_pkt_count_diff(self):
@@ -246,9 +282,9 @@ class PortStatsController(app_manager.RyuApp):
             if prev_port == curr_port:
                 # Port numbers match
                 self.diff_port_tx[prev_port] = (curr_tx - prev_tx)
-                self.logger.info("Difference for port %d calculated", prev_port)
+                self.logger.debug("Difference for port %d calculated", prev_port)
             else:
-                self.logger.info("Port numbers don't match")
+                self.logger.debug("Port numbers don't match")
 
     def __calc_pkts_per_sec(self):
         """
@@ -257,7 +293,7 @@ class PortStatsController(app_manager.RyuApp):
         """
         for port, pkt_count in self.diff_port_tx.items():
             self.pktps[port] = (self.diff_port_tx[port] / self.timer_length)
-            self.logger.info("Pkts/s for port %d = %d", port, self.pktps[port])
+            self.logger.info("Port: %d :: Pkt/s = %s", port, self.pktps[port])
 
     def __compare_threshold(self):
         """
@@ -278,25 +314,44 @@ class PortStatsController(app_manager.RyuApp):
         :param port_no: source port for attacker
         :return: None
         """
-
+        
+        """ Find Hardware address of port """
+        for port, addr in self.port_list.items():
+            if port == port_no:
+                self.logger.info("PortMod :: Found MAC --> Applying mitigation")
+                hw_addr = addr
+        
+#        mac_table = self.mac_to_port[self.dpid_store].items()
+#        for entry in mac_table:
+#            if port_no == entry[1]:
+#                self.logger.info("Found MAC --> Applying mitigation")
+#                hw_addr = entry[0]
+        
         """ Send PortMod """
         ofp = self.datapath_store.ofproto
         ofp_parser = self.datapath_store.ofproto_parser
+        
+        # Bitmap of OFPPC_* flags
+        config = (ofp.OFPPC_PORT_DOWN)
 
-        config = 0
-        mask = ofp.OFPPC_PORT_DOWN
+        # Mask defs found in ofproto_v1_3.py ln84
+        # Bitmap of OFPPC_* flags to be changed
+        mask = (ofp.OFPPC_PORT_DOWN)
+
+        # Advertise defs found in ofproto_v1_3.py ln115
         advertise = (ofp.OFPPF_10MB_HD | ofp.OFPPF_100MB_FD |
                      ofp.OFPPF_1GB_FD | ofp.OFPPF_COPPER |
                      ofp.OFPPF_AUTONEG | ofp.OFPPF_PAUSE |
                      ofp.OFPPF_PAUSE_ASYM)
+
         req = ofp_parser.OFPPortMod(self.datapath_store, port_no,
-                                    self.zodiac_hw_addr, config,
+                                    hw_addr, config,
                                     mask, advertise)
         self.datapath_store.send_msg(req)
         self.logger.info("PortMod :: Block port %d sent", port_no)
 
         """ Start timer to bring port back up"""
-        Timer(30, self.__enable_port, args=(port_no,))
+        Timer(60, self.__enable_port, args=(port_no,)).start()
 
     def __enable_port(self, port_no):
         """
@@ -304,8 +359,24 @@ class PortStatsController(app_manager.RyuApp):
         :param port_no: Port to re-enable
         :return: None
         """
+        
+        """ Find Hardware address of port """
+        for port, addr in self.port_list.items():
+            if port == port_no:
+                self.logger.info("PortMod :: Found MAC --> Applying mitigation")
+                hw_addr = addr
+                
+#        mac_table = self.mac_to_port[self.dpid_store].items()
+#        for entry in mac_table:
+#            if port_no == entry[1]:
+#                self.logger.info("Found MAC --> Reverting Mitigation")
+#                hw_addr = entry[0]
+        
+        """ Send PortMod """
         ofp = self.datapath_store.ofproto
         ofp_parser = self.datapath_store.ofproto_parser
+        
+        # This changes the port mode
         config = 0
 
         # Mask defs found in ofproto_v1_3.py ln84
@@ -318,7 +389,7 @@ class PortStatsController(app_manager.RyuApp):
                      ofp.OFPPF_AUTONEG | ofp.OFPPF_PAUSE |
                      ofp.OFPPF_PAUSE_ASYM)
         req = ofp_parser.OFPPortMod(self.datapath_store, port_no,
-                                    self.zodiac_hw_addr, config,
+                                    hw_addr, config,
                                     mask, advertise)
         self.datapath_store.send_msg(req)
-        self.logger.info("PortMod :: Block port %d sent", port_no)
+        self.logger.info("PortMod :: Unblock port %d sent", port_no)
