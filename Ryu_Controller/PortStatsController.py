@@ -19,6 +19,9 @@ class PortStatsController(app_manager.RyuApp):
         self.datapath_store = None      # Variable to store datapath so it can be used out of context
         self.initial_request = True     # Boolean so requests are only sent when timer ends & on first packet_in
 
+        # Physical network variables & members
+        self.zodiac_hw_addr = '70:B3:D5:6C:DD:BB' # MAC addr of Zodiac FX
+
         # DDoS detection variables & members
         self.switch_ports = []          # List of ports on switch
         self.prev_port_tx = {}          # Dictionary containing previous: {port_number, tx_packets}
@@ -268,3 +271,54 @@ class PortStatsController(app_manager.RyuApp):
             else:
                 self.logger.info("Port: %d :: Pks/s < threshold", port)
                 self.ddos[port] = False
+
+    def __mitigate_attack(self, port_no):
+        """
+        Enact mitigation method attacking (physical) ports
+        :param port_no: source port for attacker
+        :return: None
+        """
+
+        """ Send PortMod """
+        ofp = self.datapath_store.ofproto
+        ofp_parser = self.datapath_store.ofproto_parser
+
+        config = 0
+        mask = ofp.OFPPC_PORT_DOWN
+        advertise = (ofp.OFPPF_10MB_HD | ofp.OFPPF_100MB_FD |
+                     ofp.OFPPF_1GB_FD | ofp.OFPPF_COPPER |
+                     ofp.OFPPF_AUTONEG | ofp.OFPPF_PAUSE |
+                     ofp.OFPPF_PAUSE_ASYM)
+        req = ofp_parser.OFPPortMod(self.datapath_store, port_no,
+                                    self.zodiac_hw_addr, config,
+                                    mask, advertise)
+        self.datapath_store.send_msg(req)
+        self.logger.info("PortMod :: Block port %d sent", port_no)
+
+        """ Start timer to bring port back up"""
+        Timer(30, self.__enable_port, args=(port_no,))
+
+    def __enable_port(self, port_no):
+        """
+        Handler to send another PortMod to re-enable port
+        :param port_no: Port to re-enable
+        :return: None
+        """
+        ofp = self.datapath_store.ofproto
+        ofp_parser = self.datapath_store.ofproto_parser
+        config = 0
+
+        # Mask defs found in ofproto_v1_3.py ln84
+        mask = (ofp.OFPPC_PORT_DOWN | ofp.OFPPC_NO_RECV |
+                ofp.OFPPC_NO_FWD | ofp.OFPPC_NO_PACKET_IN)
+
+        # Advertise defs found in ofproto_v1_3.py ln115
+        advertise = (ofp.OFPPF_10MB_HD | ofp.OFPPF_100MB_FD |
+                     ofp.OFPPF_1GB_FD | ofp.OFPPF_COPPER |
+                     ofp.OFPPF_AUTONEG | ofp.OFPPF_PAUSE |
+                     ofp.OFPPF_PAUSE_ASYM)
+        req = ofp_parser.OFPPortMod(self.datapath_store, port_no,
+                                    self.zodiac_hw_addr, config,
+                                    mask, advertise)
+        self.datapath_store.send_msg(req)
+        self.logger.info("PortMod :: Block port %d sent", port_no)
