@@ -23,7 +23,7 @@ class PortStatsController(app_manager.RyuApp):
         self.initial_request = True     # Boolean so requests are only sent when timer ends & on first packet_in
 
         # Physical network variables & members
-        self.zodiac_hw_addr = '70:B3:D5:6C:DD:BB' # MAC addr of Zodiac FX
+        self.zodiac_hw_addr = '70:B3:D5:6C:DD:BB'  # MAC addr of Zodiac FX
 
         # DDoS detection variables & members
         self.switch_ports = []          # List of ports on switch
@@ -132,7 +132,6 @@ class PortStatsController(app_manager.RyuApp):
         for port in ev.msg.body:
             self.port_list[port.port_no] = port.hw_addr
             self.logger.info("PortDesc :: port_no = %d  hw_addr = %s", port.port_no, port.hw_addr)
-            
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
     def port_stats_reply_handler(self, ev):
@@ -160,7 +159,7 @@ class PortStatsController(app_manager.RyuApp):
         self.__ddos_detection(port_packet_recv)
         for port in ports:
             self.logger.debug('PortStats :: %s\n'
-                             '----------------------------------------------------------', port)
+                              '----------------------------------------------------------', port)
         request_timer = Timer(self.timer_length, self.send_port_stats_request)
         request_timer.start()
 
@@ -266,7 +265,7 @@ class PortStatsController(app_manager.RyuApp):
         :param new_prev: Dictionary containing: {port_no, tx_packet_count}
         :return: None
         """
-        for port,tx_count in new_prev.items():
+        for port, tx_count in new_prev.items():
             if port in self.prev_port_tx.keys():
                 self.logger.debug("Updated prev_port: %d", port)
             else:
@@ -314,29 +313,24 @@ class PortStatsController(app_manager.RyuApp):
         :param port_no: source port for attacker
         :return: None
         """
-        
+        hw_addr = None
+
         """ Find Hardware address of port """
         for port, addr in self.port_list.items():
             if port == port_no:
                 self.logger.info("PortMod :: Found MAC --> Applying mitigation")
                 hw_addr = addr
         
-#        mac_table = self.mac_to_port[self.dpid_store].items()
-#        for entry in mac_table:
-#            if port_no == entry[1]:
-#                self.logger.info("Found MAC --> Applying mitigation")
-#                hw_addr = entry[0]
-        
         """ Send PortMod """
         ofp = self.datapath_store.ofproto
         ofp_parser = self.datapath_store.ofproto_parser
         
         # Bitmap of OFPPC_* flags
-        config = (ofp.OFPPC_PORT_DOWN)
+        config = ofp.OFPPC_PORT_DOWN
 
         # Mask defs found in ofproto_v1_3.py ln84
         # Bitmap of OFPPC_* flags to be changed
-        mask = (ofp.OFPPC_PORT_DOWN)
+        mask = ofp.OFPPC_PORT_DOWN
 
         # Advertise defs found in ofproto_v1_3.py ln115
         advertise = (ofp.OFPPF_10MB_HD | ofp.OFPPF_100MB_FD |
@@ -359,18 +353,13 @@ class PortStatsController(app_manager.RyuApp):
         :param port_no: Port to re-enable
         :return: None
         """
-        
+        hw_addr = None
+
         """ Find Hardware address of port """
         for port, addr in self.port_list.items():
             if port == port_no:
                 self.logger.info("PortMod :: Found MAC --> Applying mitigation")
                 hw_addr = addr
-                
-#        mac_table = self.mac_to_port[self.dpid_store].items()
-#        for entry in mac_table:
-#            if port_no == entry[1]:
-#                self.logger.info("Found MAC --> Reverting Mitigation")
-#                hw_addr = entry[0]
         
         """ Send PortMod """
         ofp = self.datapath_store.ofproto
