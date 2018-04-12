@@ -238,13 +238,13 @@ class PortStatsController(app_manager.RyuApp):
             for port, flag in self.ddos.items():
                 if flag:
                     self.logger.info("==========================================================")
-                    self.logger.info("          DDoS detected :: Origin =  port %d", port)
+                    self.logger.info("          Attack detected :: Origin =  port %d", port)
                     self.logger.info("==========================================================")
                     self.__mitigate_attack(port)
         else:
             self.logger.debug("self.prev_port_tx is empty")
         self.__update_prev_tx(self.curr_port_tx)
-        self.logger.debug("DDoS detection finished")
+        self.logger.debug("Attack detection finished")
 
     def __update_curr_tx(self, new_curr):
         """
@@ -358,7 +358,7 @@ class PortStatsController(app_manager.RyuApp):
         """ Find Hardware address of port """
         for port, addr in self.port_list.items():
             if port == port_no:
-                self.logger.info("PortMod :: Found MAC --> Applying mitigation")
+                self.logger.info("PortMod :: Found MAC --> Reverting mitigation")
                 hw_addr = addr
         
         """ Send PortMod """
