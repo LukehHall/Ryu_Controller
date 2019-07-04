@@ -1,6 +1,12 @@
 # Ryu_Controller
 Loughborough University - ECS - Part C Project - SDN Ryu Controller
 
+Folders:
+---
+    + Performance_Tests - Performance testing of Ryu Controllers
+    + Ryu_Controller - Various Ryu Controllers
+    + NN_Testing - Neural network testing
+
 Classes:
 ---
     + l2.py - Dumb layer 2 switch
