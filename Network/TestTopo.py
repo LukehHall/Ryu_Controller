@@ -8,9 +8,9 @@
 from mininet.cli import CLI
 from mininet.log import lg, info
 from mininet.topo import SingleSwitchTopo
-from mininet.topolib import TreeNet
 from mininet.net import Mininet
-from mininet.node import RemoteController, Ryu
+from mininet.node import RemoteController, Node
+from mininet.util import waitListening
 
 class TestTopo(SingleSwitchTopo):
     """ Testing custom topology of N hosts"""
@@ -33,6 +33,47 @@ class TestTopo(SingleSwitchTopo):
 # Add topology to topology dictionary
 topos = { 'TestTopo': TestTopo }
 
+def connectToRootNS(network, switch, ip, routes):
+    """
+    Connect hosts to root namespace via switch, starts network
+    param network: Mininet() network object
+    param switch: switch to connect to root namespace
+    param ip: IP address for root node
+    param routes: host networks to route to
+    """
+    # Create a node in root namespace and link to switch 0
+    root = Node( 'root', inNamespace=False )
+    intf = network.addLink( root, switch ).intf1
+    root.setIP( ip, intf=intf )
+    # Start network that now includes link to root namespace
+    # network.start()
+    # Add routes from root ns to hosts
+    for route in routes:
+        root.cmd( 'route add -net ' + route + ' dev ' + str( intf ) )
+
+def sshd(network, cmd='/usr/sbin/sshd', opts='-D -o UseDNS=no -u0',
+            ip='10.123.123.1/32', routes=None, switch=None):
+    """
+    Start up ssh daemons on all hosts.
+    param ip: root-eth0 IP address in root namespace (10.123.123.1/32)
+    param routes: Mininet host networks to route to (10.0/24)
+    param switch: Mininet switch to connect to root namespace (s1) 
+    """
+    if not switch:
+        switch = network['s1']
+    if not routes:
+        routes = ['10.0.0.0/24']
+    connectToRootNS(network, switch, ip, routes)
+    for host in network.hosts:
+        host.cmd(cmd + ' ' + opts + '&')
+    info("*** Waiting for ssh daemons to start\n")
+    for server in network.hosts:
+        waitListening(server=server, port=22, timeout=5)
+        
+    info( "\n*** Hosts are running sshd at the following addresses:\n" )
+    for host in network.hosts:
+        info( host.name, host.IP(), '\n' )
+
 if __name__ == "__main__":
     lg.setLogLevel('info')
     
@@ -49,12 +90,13 @@ if __name__ == "__main__":
                         ip='127.0.0.1',
                         port=7777)
     
+    # Enable ssh on hosts
+    sshd(net)
+    
     # Add NAT
     info("*** Adding NAT\n")
     net.addNAT().configDefault()
     net.start()
-    
-    # Enable ssh on hosts
     
     # Start network & startup info messages
     info("*** %s hosts are running and should be connected to internet\n" % hostCount)

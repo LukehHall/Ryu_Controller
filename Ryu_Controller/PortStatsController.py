@@ -5,13 +5,14 @@ from threading import Timer
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.lib.packet import packet, ethernet, ether_types
-from ryu.ofproto import ofproto_v1_3
+from ryu.ofproto import ofproto_v1_3, ofproto_v1_5
 from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER, HANDSHAKE_DISPATCHER
 from ryu import utils
 
 
 class PortStatsController(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+    #OFP_VERSIONS = [ofproto_v1_5.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
         super(PortStatsController, self).__init__(*args, **kwargs)
@@ -173,6 +174,32 @@ class PortStatsController(app_manager.RyuApp):
         self.logger.info('OFPErrorMsg received: type=0x%02x code=0x%02x '
                          'message=%s',
                          msg.type, msg.code, utils.hex_array(msg.data))
+                         
+    @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
+    def flow_stats_reply_handler(self, ev):
+        """
+        Handler for flow stats reply
+        https://ryu.readthedocs.io/en/latest/ofproto_v1_5_ref.html#ryu.ofproto.ofproto_v1_5_parser.OFPFlowStatsReply
+        :param ev: Event message
+        :return: None
+        """
+        flows = []
+        for stat in ev.msg.body:
+            flows.append('table_id=%s '
+                     'duration_sec=%d duration_nsec=%d '
+                     'priority=%d '
+                     'idle_timeout=%d hard_timeout=%d flags=0x%04x '
+                     'cookie=%d packet_count=%d byte_count=%d '
+                     'match=%s instructions=%s' %
+                     (stat.table_id,
+                      stat.duration_sec, stat.duration_nsec,
+                      stat.priority,
+                      stat.idle_timeout, stat.hard_timeout, stat.flags,
+                      stat.cookie, stat.packet_count, stat.byte_count,
+                      stat.match, stat.instructions))
+        for flow in flows:
+            self.logger.info('FlowStats :: %s\n'
+                              '----------------------------------------------------------', flow)
 
     """ Public Methods"""
 
@@ -217,7 +244,29 @@ class PortStatsController(app_manager.RyuApp):
             req = ofp_parser.OFPPortStatsRequest(self.datapath_store, 0, ofp.OFPP_ANY)
             self.datapath_store.send_msg(req)
             self.logger.info("PortStats :: Request Message Sent")
+            self.send_flow_stats_request()
             self.switch_responded = False
+            
+    def send_flow_stats_request(self):
+       """
+       Send flow stats request message to switch
+       :return: None
+       """
+       if self.switch_responded:
+           # Currently not waiting for switch to respond to previous request
+           ofp = self.datapath_store.ofproto
+           ofp_parser = self.datapath_store.ofproto_parser
+           
+           cookie = cookie_mask = 0
+           match = ofp_parser.OFPMatch(in_port=1)
+           req = ofp_parser.OFPFlowStatsRequest(self.datapath_store, 0,
+                                                ofp.OFPTT_ALL,
+                                                ofp.OFPP_ANY, ofp.OFPG_ANY,
+                                                cookie, cookie_mask,
+                                                match)
+           self.datapath_store.send_msg(req)
+           self.logger.info("FlowStats :: Request Message Sent")
+           self.switch_responded = False
 
     """ Private Methods """
 
