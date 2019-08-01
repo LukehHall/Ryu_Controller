@@ -22,6 +22,7 @@ class FlowStatsController(app_manager.RyuApp):
         self.dpid_store = None          # Variable to store datapath id 
         self.initial_request = True     # Boolean so requests are only sent when timer ends & on first packet_in
         self.timer_length = 8
+        self.host_resp = 0
         
     """ Event Handlers """
 
@@ -29,7 +30,7 @@ class FlowStatsController(app_manager.RyuApp):
     def switch_features_handler(self, ev):
         """
         Switch added to the controller, add table-miss entry
-        https://ryu.readthedocs.io/en/latest/ofproto_v1_5_ref.html#ryu.ofproto.ofproto_v1_5_parser.OFPSwitchFeatures
+        https://ryu.readthedocs.io/en/latest/ofproto_v1_4_ref.html#ryu.ofproto.ofproto_v1_4_parser.OFPSwitchFeatures
         :param ev: packet from event
         :return: None
         """
@@ -50,7 +51,7 @@ class FlowStatsController(app_manager.RyuApp):
     def packet_in_handler(self, ev):
         """
         Process new/unknown flow in network, called by event triggering ( ofp_event.EventOFPPacketIn )
-        https://ryu.readthedocs.io/en/latest/ofproto_v1_5_ref.html#ryu.ofproto.ofproto_v1_5_parser.OFPPacketIn
+        https://ryu.readthedocs.io/en/latest/ofproto_v1_4_ref.html#ryu.ofproto.ofproto_v1_4_parser.OFPPacketIn
         :param ev: packet from event
         :return: None
         """
@@ -112,7 +113,7 @@ class FlowStatsController(app_manager.RyuApp):
     def port_desc_stats_reply_handler(self, ev):
         """
         Handler for port description reply
-        https://ryu.readthedocs.io/en/latest/ofproto_v1_5_ref.html#ryu.ofproto.ofproto_v1_5_parser.OFPPortDescStatsReply
+        https://ryu.readthedocs.io/en/latest/ofproto_v1_4_ref.html#ryu.ofproto.ofproto_v1_4_parser.OFPPortDescStatsReply
         :param ev: Event message
         :return: None
         """
@@ -120,16 +121,18 @@ class FlowStatsController(app_manager.RyuApp):
         for port in ev.msg.body:
             self.port_list[port.port_no] = port.hw_addr
             self.logger.info("PortDesc :: port_no = %d  hw_addr = %s", port.port_no, port.hw_addr)
+        self.logger.info("PortDesc :: port_list : %s", len(self.port_list))
             
     @set_ev_cls(ofp_event.EventOFPFlowStatsReply, MAIN_DISPATCHER)
     def flow_stats_reply_handler(self, ev):
         """
         Handler for flow stats reply
-        https://ryu.readthedocs.io/en/latest/ofproto_v1_5_ref.html#ryu.ofproto.ofproto_v1_5_parser.OFPFlowStatsReply
+        https://ryu.readthedocs.io/en/latest/ofproto_v1_4_ref.html#ryu.ofproto.ofproto_v1_4_parser.OFPFlowStatsReply
         :param ev: Event message
         :return: None
         """
-        self.switch_responded = True
+        self.host_resp += 1
+            
         flows = []
         for stat in ev.msg.body:
             flows.append('table_id=%s '
@@ -145,9 +148,24 @@ class FlowStatsController(app_manager.RyuApp):
                       stat.flags, stat.importance,
                       stat.cookie, stat.packet_count, stat.byte_count,
                       stat.match, stat.instructions))
-        for flow in flows:
+        
+        # Remove duplicates
+        dupes = list(dict.fromkeys(flows))
+        self.logger.info('FlowStats :: \t'
+                         'Flows : %s\tDupes : %s\tHost : %s', len(flows), len(dupes), self.host_resp)
+        if len(dupes) == 0:
+            self.logger.info('----------------------------------------------------------')
+        else:
+            self.logger.info('++++++++++++++++++++++++++++++++++++++++++++++++++++++++++')    
+           
+        for flow in dupes:
             self.logger.info('FlowStats :: %s\n'
                               '----------------------------------------------------------', flow)
+
+        if self.host_resp == (len(self.port_list)-1):
+            self.logger.info('FlowStats :: \tAll hosts responded')
+            self.switch_responded = True
+            self.host_resp = 0
 
         request_timer = Timer(self.timer_length, self.send_flow_stats_request)
         request_timer.start()
@@ -213,5 +231,6 @@ class FlowStatsController(app_manager.RyuApp):
                                                     cookie, cookie_mask,
                                                     match)
                 self.datapath_store.send_msg(req)
-                self.logger.info("FlowStats :: Request Message Sent [port %s]", in_port)
+                self.logger.info("FlowStats :: Request Message Sent [host %s]", in_port)
+            self.logger.info('----------------------------------------------------------')
             self.switch_responded = False
