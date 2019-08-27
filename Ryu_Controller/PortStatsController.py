@@ -1,13 +1,21 @@
 # Luke Hall B425724 - Part C Project
 # PortStats Controller - Controller that gets usage stats from switch during operation
 
+# Stock imports
 from threading import Timer
+
+# Ryu imports
 from ryu.base import app_manager
 from ryu.controller import ofp_event
 from ryu.lib.packet import packet, ethernet, ether_types
 from ryu.ofproto import ofproto_v1_3, ofproto_v1_5
 from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER, HANDSHAKE_DISPATCHER
 from ryu import utils
+
+# ML imports
+import pickle
+import numpy as np
+from sklearn.cluster import KMeans
 
 
 class PortStatsController(app_manager.RyuApp):
@@ -16,6 +24,9 @@ class PortStatsController(app_manager.RyuApp):
 
     def __init__(self, *args, **kwargs):
         super(PortStatsController, self).__init__(*args, **kwargs)
+        
+        # Ryu variables & members
+        self.switch_port = 4294967294   # Port number for the switch
         self.port_list = {}             # Dictionary containing port info: {port_number, hw_addr}
         self.mac_to_port = {}           # List for MAC addresses to switch port
         self.switch_responded = True    # Boolean to check whether switch has responded with port stats
@@ -32,9 +43,22 @@ class PortStatsController(app_manager.RyuApp):
         self.curr_port_tx = {}          # Dictionary containing new: {port_number, tx_packets}
         self.diff_port_tx = {}          # Dictionary containing tx difference: {port_number, difference}
         self.pktps = {}                 # Dictionary containing pkts/s: {port_number, pkts/s}
+        self.pktps_ts = {}              # Dictionary containing pkts/s time-series: {port_number, [pkt/s]}
+        self.ts_length = 10             # Maximum length of pkts/s time-series
         self.tx_packet_threshold = 500  # Threshold for received packets/second on port
         self.timer_length = 15          # Timer length
         self.ddos = {}                  # DDoS dictionary for each port: {port_number, flag}
+        
+        # Clustering variables & members
+        self.model = None                             # ML model
+        self.model_file = './cluster_model.mod'       # Model filename/path
+        self.model_loaded = False                     # Model loaded from file flag
+        self.n_clusters = 2                           # Number of clusters
+        self.iters = 300                              # Number of iterations
+        self.dataset = []                             # Training dataset
+        
+        # Init method calls
+        self.__load_model()
 
     """ Event Handlers """
 
@@ -132,6 +156,11 @@ class PortStatsController(app_manager.RyuApp):
         self.logger.info("PortDesc :: Message received")
         for port in ev.msg.body:
             self.port_list[port.port_no] = port.hw_addr
+            # Create numpy array
+            self.pktps_ts[port.port_no] = np.zeros((10))
+            # Reshape array to fit ML algorithm
+            np.reshape(self.pktps_ts[port.port_no], (-1, 1))
+            
             self.logger.info("PortDesc :: port_no = %d  hw_addr = %s", port.port_no, port.hw_addr)
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
@@ -244,7 +273,7 @@ class PortStatsController(app_manager.RyuApp):
             req = ofp_parser.OFPPortStatsRequest(self.datapath_store, 0, ofp.OFPP_ANY)
             self.datapath_store.send_msg(req)
             self.logger.info("PortStats :: Request Message Sent")
-            self.send_flow_stats_request()
+            # self.send_flow_stats_request()
             self.switch_responded = False
             
     def send_flow_stats_request(self):
@@ -284,12 +313,33 @@ class PortStatsController(app_manager.RyuApp):
             self.__find_pkt_count_diff()
             self.__calc_pkts_per_sec()
             self.__compare_threshold()
+            
+            # TIME-SERIES
+            for port, pktps in self.pktps.items():
+                self.pktps_ts[port] = np.insert(self.pktps_ts[port], 0, pktps)
+            
+            self.logger.info("ML :: Time-series updated")
+            # CLUSTERING
+            for (ts_port, ts), (ddos_port, flag) in zip(self.pktps_ts.items(), self.ddos.items()):
+                if ts_port == self.switch_port:
+                    continue
+                self.logger.info("ts port : %d", ts_port)
+                self.logger.info("dd port : %d", ddos_port)
+                # Remove old value
+                ts = ts[:-1]
+                # print(ts.shape)
+                
+                prediction = self.model.fit_predict(ts.reshape(10,1))
+                self.logger.info("prediction : %s", str(prediction))
+                self.ddos[ts_port] = prediction
+                        
             for port, flag in self.ddos.items():
                 if flag:
                     self.logger.info("==========================================================")
                     self.logger.info("          Attack detected :: Origin =  port %d", port)
                     self.logger.info("==========================================================")
-                    self.__mitigate_attack(port)
+                    print(port + " :: " + flag)
+                    # self.__mitigate_attack(port)
         else:
             self.logger.debug("self.prev_port_tx is empty")
         self.__update_prev_tx(self.curr_port_tx)
@@ -431,3 +481,24 @@ class PortStatsController(app_manager.RyuApp):
                                     mask, advertise)
         self.datapath_store.send_msg(req)
         self.logger.info("PortMod :: Unblock port %d sent", port_no)
+        
+    def __save_model(self):
+        """
+        Saves clustering ML model to file
+        :return: None
+        """
+        pickle.dump(self.model, open(self.model_file, 'wb'))
+        
+    def __load_model(self):
+        """
+        Loads clustering ML model from file and sets flag accordingly
+        :return: None
+        """
+        try:
+            self.model = pickle.load(open(self.model_file, 'rb'))
+            self.model_loaded = True
+            self.logger.info("ML :: Model loaded from file")
+        except IOError:
+            self.model = KMeans(n_clusters=self.n_clusters, max_iter=self.iters)
+            self.model_loaded = False
+            self.logger.info("ML :: New model created ")
