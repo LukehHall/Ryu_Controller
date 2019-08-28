@@ -1,4 +1,4 @@
-# Luke Hall B425724 - Part C Project
+# Luke Hall B425724 - Part C / MSc Project
 # PortStats Controller - Controller that gets usage stats from switch during operation
 
 # Stock imports
@@ -157,9 +157,9 @@ class PortStatsController(app_manager.RyuApp):
         for port in ev.msg.body:
             self.port_list[port.port_no] = port.hw_addr
             # Create numpy array
-            self.pktps_ts[port.port_no] = np.zeros((10))
+            self.pktps_ts[port.port_no] = np.zeros((self.ts_length))
             # Reshape array to fit ML algorithm
-            np.reshape(self.pktps_ts[port.port_no], (-1, 1))
+            # np.reshape(self.pktps_ts[port.port_no], (-1, 1))
             
             self.logger.info("PortDesc :: port_no = %d  hw_addr = %s", port.port_no, port.hw_addr)
 
@@ -316,6 +316,7 @@ class PortStatsController(app_manager.RyuApp):
             
             # TIME-SERIES
             for port, pktps in self.pktps.items():
+                self.logger.info("ML :: Updating port %d", port)
                 self.pktps_ts[port] = np.insert(self.pktps_ts[port], 0, pktps)
             
             self.logger.info("ML :: Time-series updated")
@@ -323,22 +324,28 @@ class PortStatsController(app_manager.RyuApp):
             for (ts_port, ts), (ddos_port, flag) in zip(self.pktps_ts.items(), self.ddos.items()):
                 if ts_port == self.switch_port:
                     continue
+                print(ts.shape)
                 self.logger.info("ts port : %d", ts_port)
                 self.logger.info("dd port : %d", ddos_port)
                 # Remove old value
-                ts = ts[:-1]
-                # print(ts.shape)
+                diff = len(ts) - 10
+                ts = ts[:-diff]
+                print(ts.shape)
                 
                 prediction = self.model.fit_predict(ts.reshape(10,1))
-                self.logger.info("prediction : %s", str(prediction))
+                self.logger.info("ML :: Prediction : %s", str(prediction))
                 self.ddos[ts_port] = prediction
                         
             for port, flag in self.ddos.items():
-                if flag:
+                if port == self.switch_port:
+                    continue
+                print(type(flag))
+                print(str(flag.mean()))
+                if flag.mean() > 0.6:
                     self.logger.info("==========================================================")
                     self.logger.info("          Attack detected :: Origin =  port %d", port)
                     self.logger.info("==========================================================")
-                    print(port + " :: " + flag)
+                    self.logger.info("%s :: %s", str(port), str(flag))
                     # self.__mitigate_attack(port)
         else:
             self.logger.debug("self.prev_port_tx is empty")
