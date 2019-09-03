@@ -56,9 +56,13 @@ class PortStatsController(app_manager.RyuApp):
         self.n_clusters = 2                           # Number of clusters
         self.iters = 300                              # Number of iterations
         self.dataset = []                             # Training dataset
+        self.dataset_file = 'data.txt'                # Dataset file
         
         # Init method calls
         self.__load_model()
+        if len(self.dataset) > 1:
+            self.model.fit(self.dataset)
+            self.logger.info("ML :: Model trained")
 
     """ Event Handlers """
 
@@ -324,33 +328,37 @@ class PortStatsController(app_manager.RyuApp):
             for (ts_port, ts), (ddos_port, flag) in zip(self.pktps_ts.items(), self.ddos.items()):
                 if ts_port == self.switch_port:
                     continue
-                print(ts.shape)
-                self.logger.info("ts port : %d", ts_port)
-                self.logger.info("dd port : %d", ddos_port)
+                # print(ts.shape)
+                self.logger.debug("ts port : %d", ts_port)
+                self.logger.debug("dd port : %d", ddos_port)
                 # Remove old value
                 diff = len(ts) - 10
                 ts = ts[:-diff]
-                print(ts.shape)
+                self.logger.debug("sliced :: %s", str(ts))
                 
-                prediction = self.model.fit_predict(ts.reshape(10,1))
+                # TRAINING
+                self.dataset.append(ts)
+                self.logger.debug("ML :: Dataset length: %d", len(self.dataset))
+                
+                # PREDICTION
+                prediction = self.model.predict(ts.reshape(1,-1))
                 self.logger.info("ML :: Prediction : %s", str(prediction))
                 self.ddos[ts_port] = prediction
                         
             for port, flag in self.ddos.items():
                 if port == self.switch_port:
                     continue
-                print(type(flag))
-                print(str(flag.mean()))
-                if flag.mean() > 0.6:
+                self.logger.info("%s :: %s", str(port), str(flag))
+                if flag:
                     self.logger.info("==========================================================")
                     self.logger.info("          Attack detected :: Origin =  port %d", port)
                     self.logger.info("==========================================================")
-                    self.logger.info("%s :: %s", str(port), str(flag))
-                    # self.__mitigate_attack(port)
+                    self.__mitigate_attack(port)
         else:
             self.logger.debug("self.prev_port_tx is empty")
         self.__update_prev_tx(self.curr_port_tx)
         self.logger.debug("Attack detection finished")
+        self.__save_model()
 
     def __update_curr_tx(self, new_curr):
         """
@@ -494,7 +502,11 @@ class PortStatsController(app_manager.RyuApp):
         Saves clustering ML model to file
         :return: None
         """
+        self.logger.info("ML :: Model saved to file")
         pickle.dump(self.model, open(self.model_file, 'wb'))
+        # Save dataset
+        if len(self.dataset) > 1:
+            pickle.dump(self.dataset, open('data.txt', 'wb'))
         
     def __load_model(self):
         """
@@ -505,7 +517,10 @@ class PortStatsController(app_manager.RyuApp):
             self.model = pickle.load(open(self.model_file, 'rb'))
             self.model_loaded = True
             self.logger.info("ML :: Model loaded from file")
+            self.dataset = pickle.load(open('data.txt', 'rb'))
+            self.logger.info("ML :: Dataset loaded from file")
         except IOError:
             self.model = KMeans(n_clusters=self.n_clusters, max_iter=self.iters)
             self.model_loaded = False
-            self.logger.info("ML :: New model created ")
+            self.logger.info("ML :: New model created")
+            self.logger.info("ML :: No data set loaded")
