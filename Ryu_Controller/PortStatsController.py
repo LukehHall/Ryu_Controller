@@ -44,7 +44,6 @@ class PortStatsController(app_manager.RyuApp):
         self.pktps = {}                 # Dictionary containing pkts/s: {port_number, pkts/s}
         self.pktps_ts = {}              # Dictionary containing pkts/s time-series: {port_number, [pkt/s]}
         self.ts_length = 10             # Maximum length of pkts/s time-series
-        self.tx_packet_threshold = 500  # Threshold for received packets/second on port
         self.timer_length = 15          # Timer length
         self.ddos = {}                  # DDoS dictionary for each port: {port_number, flag}
         
@@ -159,8 +158,10 @@ class PortStatsController(app_manager.RyuApp):
         self.logger.info("PortDesc :: Message received")
         for port in ev.msg.body:
             self.port_list[port.port_no] = port.hw_addr
-            # Create numpy array
-            self.pktps_ts[port.port_no] = np.zeros((self.ts_length))            
+            # Create numpy array for time-series
+            self.pktps_ts[port.port_no] = np.zeros((self.ts_length))
+            # Create ddos flag for each port
+            self.ddos[port] = False
             self.logger.info("PortDesc :: port_no = %d  hw_addr = %s", port.port_no, port.hw_addr)
 
     @set_ev_cls(ofp_event.EventOFPPortStatsReply, MAIN_DISPATCHER)
@@ -264,11 +265,10 @@ class PortStatsController(app_manager.RyuApp):
             self.logger.debug("self.prev_port_tx not empty")
             self.__find_pkt_count_diff()
             self.__calc_pkts_per_sec()
-            self.__compare_threshold()
             
             # TIME-SERIES
             for port, pktps in self.pktps.items():
-                self.logger.info("ML :: Updating port %d", port)
+                self.logger.debug("ML :: Updating port %d", port)
                 self.pktps_ts[port] = np.insert(self.pktps_ts[port], 0, pktps)
             
             self.logger.info("ML :: Time-series updated")
@@ -276,7 +276,6 @@ class PortStatsController(app_manager.RyuApp):
             for (ts_port, ts), (ddos_port, flag) in zip(self.pktps_ts.items(), self.ddos.items()):
                 if ts_port == self.switch_port:
                     continue
-                # print(ts.shape)
                 self.logger.debug("ts port : %d", ts_port)
                 self.logger.debug("dd port : %d", ddos_port)
                 # Remove old value
@@ -289,14 +288,17 @@ class PortStatsController(app_manager.RyuApp):
                 self.logger.debug("ML :: Dataset length: %d", len(self.dataset))
                 
                 # PREDICTION
+                if not self.model_loaded:
+                    # Fit model with dataset
+                    self.model.fit(self.dataset)
+                    
                 prediction = self.model.predict(ts.reshape(1,-1))
-                self.logger.info("ML :: Prediction : %s", str(prediction))
                 self.ddos[ts_port] = prediction
                         
             for port, flag in self.ddos.items():
                 if port == self.switch_port:
                     continue
-                self.logger.info("%s :: %s", str(port), str(flag))
+                self.logger.info("ML :: Prediction : port %s :: %s", str(port), str(flag))
                 if flag:
                     self.logger.info("==========================================================")
                     self.logger.info("          Attack detected :: Origin =  port %d", port)
@@ -355,19 +357,6 @@ class PortStatsController(app_manager.RyuApp):
         for port, pkt_count in self.diff_port_tx.items():
             self.pktps[port] = (self.diff_port_tx[port] / self.timer_length)
             self.logger.info("Port: %d :: Pkt/s = %s", port, self.pktps[port])
-
-    def __compare_threshold(self):
-        """
-        Compare pkt/s for each port to threshold, trigger DDoS flag if above
-        :return: None
-        """
-        for port, pktps in self.pktps.items():
-            if pktps >= self.tx_packet_threshold:
-                self.logger.info("Port: %d :: Pkt/s >= threshold", port)
-                self.ddos[port] = True
-            else:
-                self.logger.info("Port: %d :: Pks/s < threshold", port)
-                self.ddos[port] = False
 
     def __mitigate_attack(self, port_no):
         """
@@ -459,16 +448,20 @@ class PortStatsController(app_manager.RyuApp):
     def __load_model(self):
         """
         Loads clustering ML model from file and sets flag accordingly
+        Loads previously saved dataset from file (if exists)
         :return: None
         """
         try:
             self.model = pickle.load(open(self.model_file, 'rb'))
             self.model_loaded = True
             self.logger.info("ML :: Model loaded from file")
-            self.dataset = pickle.load(open('data.txt', 'rb'))
-            self.logger.info("ML :: Dataset loaded from file")
         except IOError:
             self.model = KMeans(n_clusters=self.n_clusters, max_iter=self.iters)
             self.model_loaded = False
             self.logger.info("ML :: New model created")
-            self.logger.info("ML :: No data set loaded")
+            
+        try:
+            self.dataset = pickle.load(open('data.txt', 'rb'))
+            self.logger.info("ML :: Dataset loaded from file")
+        except IOError:
+            self.logger.info("ML :: No dataset loaded")
